@@ -146,7 +146,8 @@ static int spt_copyargs(int argc, char *argv[]) {
 
 
 void spt_init(int argc, char *argv[]) {
-        char **envp = environ;
+
+	char **envp = environ;
 	char *base, *end, *nul, *tmp;
 	int i, error;
 
@@ -166,7 +167,6 @@ void spt_init(int argc, char *argv[]) {
 	for (i = 0; envp[i]; i++) {
 		if (envp[i] < end)
 			continue;
-
 		end = envp[i] + strlen(envp[i]) + 1;
 	}
 
@@ -174,6 +174,7 @@ void spt_init(int argc, char *argv[]) {
 		goto syerr;
 
 #if __GLIBC__
+
 	if (!(tmp = strdup(program_invocation_name)))
 		goto syerr;
 
@@ -229,6 +230,16 @@ void setproctitle(const char *fmt, ...) {
 	} else {
 		len = snprintf(buf, sizeof buf, "%s", SPT.arg0);
 	}
+
+	/* 
+	 * Here, len is the length of the string copied to buf,
+	 * independently of the fact that this string may have been 
+	 * truncated. Therefore, the effective length of the copied string is
+	 * 
+	 *            min(len, sizeof(buf)-1)
+	 *
+	 * excluding the terminating NULL character.
+	 */
 
 	if (len <= 0)
 		{ error = errno; goto error; }

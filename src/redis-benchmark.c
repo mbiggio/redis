@@ -54,8 +54,8 @@ static struct config {
     const char *hostip;
     int hostport;
     const char *hostsocket;
-    int numclients;
-    int liveclients;
+    int numbclients;
+    int livebclients;
     int requests;
     int requests_issued;
     int requests_finished;
@@ -70,7 +70,7 @@ static struct config {
     long long totlatency;
     long long *latency;
     const char *title;
-    list *clients;
+    list *bclients;
     int quiet;
     int csv;
     int loop;
@@ -81,12 +81,12 @@ static struct config {
     char *auth;
 } config;
 
-typedef struct _client {
+typedef struct _bclient {
     redisContext *context;
     sds obuf;
     char **randptr;         /* Pointers to :rand: strings inside the command buf */
-    size_t randlen;         /* Number of pointers in client->randptr */
-    size_t randfree;        /* Number of unused pointers in client->randptr */
+    size_t randlen;         /* Number of pointers in bclient->randptr */
+    size_t randfree;        /* Number of unused pointers in bclient->randptr */
     size_t written;         /* Bytes of 'obuf' already written */
     long long start;        /* Start time of a request */
     long long latency;      /* Request latency */
@@ -95,11 +95,11 @@ typedef struct _client {
                                such as auth and select are prefixed to the pipeline of
                                benchmark commands and discarded after the first send. */
     int prefixlen;          /* Size in bytes of the pending prefix commands */
-} *client;
+} *bclient;
 
 /* Prototypes */
 static void writeHandler(aeEventLoop *el, int fd, void *privdata, int mask);
-static void createMissingClients(client c);
+static void createMissingbclients(bclient c);
 
 /* Implementation */
 static long long ustime(void) {
@@ -122,7 +122,7 @@ static long long mstime(void) {
     return mst;
 }
 
-static void freeClient(client c) {
+static void freebclient(bclient c) {
     listNode *ln;
     aeDeleteFileEvent(config.el,c->context->fd,AE_WRITABLE);
     aeDeleteFileEvent(config.el,c->context->fd,AE_READABLE);
@@ -130,23 +130,23 @@ static void freeClient(client c) {
     sdsfree(c->obuf);
     zfree(c->randptr);
     zfree(c);
-    config.liveclients--;
-    ln = listSearchKey(config.clients,c);
+    config.livebclients--;
+    ln = listSearchKey(config.bclients,c);
     assert(ln != NULL);
-    listDelNode(config.clients,ln);
+    listDelNode(config.bclients,ln);
 }
 
-static void freeAllClients(void) {
-    listNode *ln = config.clients->head, *next;
+static void freeAllbclients(void) {
+    listNode *ln = config.bclients->head, *next;
 
     while(ln) {
         next = ln->next;
-        freeClient(ln->value);
+        freebclient(ln->value);
         ln = next;
     }
 }
 
-static void resetClient(client c) {
+static void resetbclient(bclient c) {
     aeDeleteFileEvent(config.el,c->context->fd,AE_WRITABLE);
     aeDeleteFileEvent(config.el,c->context->fd,AE_READABLE);
     aeCreateFileEvent(config.el,c->context->fd,AE_WRITABLE,writeHandler,c);
@@ -154,7 +154,7 @@ static void resetClient(client c) {
     c->pending = config.pipeline;
 }
 
-static void randomizeClientKey(client c) {
+static void randomizebclientKey(bclient c) {
     size_t i;
 
     for (i = 0; i < c->randlen; i++) {
@@ -170,24 +170,24 @@ static void randomizeClientKey(client c) {
     }
 }
 
-static void clientDone(client c) {
+static void bclientDone(bclient c) {
     if (config.requests_finished == config.requests) {
-        freeClient(c);
+        freebclient(c);
         aeStop(config.el);
         return;
     }
     if (config.keepalive) {
-        resetClient(c);
+        resetbclient(c);
     } else {
-        config.liveclients--;
-        createMissingClients(c);
-        config.liveclients++;
-        freeClient(c);
+        config.livebclients--;
+        createMissingbclients(c);
+        config.livebclients++;
+        freebclient(c);
     }
 }
 
 static void readHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
-    client c = privdata;
+    bclient c = privdata;
     void *reply = NULL;
     UNUSED(el);
     UNUSED(fd);
@@ -245,7 +245,7 @@ static void readHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
                     config.latency[config.requests_finished++] = c->latency;
                 c->pending--;
                 if (c->pending == 0) {
-                    clientDone(c);
+                    bclientDone(c);
                     break;
                 }
             } else {
@@ -256,7 +256,7 @@ static void readHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
 }
 
 static void writeHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
-    client c = privdata;
+    bclient c = privdata;
     UNUSED(el);
     UNUSED(fd);
     UNUSED(mask);
@@ -265,12 +265,12 @@ static void writeHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
     if (c->written == 0) {
         /* Enforce upper bound to number of requests. */
         if (config.requests_issued++ >= config.requests) {
-            freeClient(c);
+            freebclient(c);
             return;
         }
 
         /* Really initialize: randomize keys and set start time. */
-        if (config.randomkeys) randomizeClientKey(c);
+        if (config.randomkeys) randomizebclientKey(c);
         c->start = ustime();
         c->latency = -1;
     }
@@ -281,7 +281,7 @@ static void writeHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
         if (nwritten == -1) {
             if (errno != EPIPE)
                 fprintf(stderr, "Writing to socket: %s\n", strerror(errno));
-            freeClient(c);
+            freebclient(c);
             return;
         }
         c->written += nwritten;
@@ -292,10 +292,10 @@ static void writeHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
     }
 }
 
-/* Create a benchmark client, configured to send the command passed as 'cmd' of
+/* Create a benchmark bclient, configured to send the command passed as 'cmd' of
  * 'len' bytes.
  *
- * The command is copied N times in the client output buffer (that is reused
+ * The command is copied N times in the bclient output buffer (that is reused
  * again and again to send the request to the server) accordingly to the configured
  * pipeline size.
  *
@@ -303,19 +303,19 @@ static void writeHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
  * database is selected, if needed. The initial SELECT will be discarded as soon
  * as the first reply is received.
  *
- * To create a client from scratch, the 'from' pointer is set to NULL. If instead
- * we want to create a client using another client as reference, the 'from' pointer
- * points to the client to use as reference. In such a case the following
- * information is take from the 'from' client:
+ * To create a bclient from scratch, the 'from' pointer is set to NULL. If instead
+ * we want to create a bclient using another bclient as reference, the 'from' pointer
+ * points to the bclient to use as reference. In such a case the following
+ * information is take from the 'from' bclient:
  *
  * 1) The command line to use.
  * 2) The offsets of the __rand_int__ elements inside the command line, used
  *    for arguments randomization.
  *
- * Even when cloning another client, prefix commands are applied if needed.*/
-static client createClient(char *cmd, size_t len, client from) {
+ * Even when cloning another bclient, prefix commands are applied if needed.*/
+static bclient createbclient(char *cmd, size_t len, bclient from) {
     int j;
-    client c = zmalloc(sizeof(struct _client));
+    bclient c = zmalloc(sizeof(struct _bclient));
 
     if (config.hostsocket == NULL) {
         c->context = redisConnectNonBlock(config.hostip,config.hostport);
@@ -335,10 +335,10 @@ static client createClient(char *cmd, size_t len, client from) {
 
     /* Build the request buffer:
      * Queue N requests accordingly to the pipeline size, or simply clone
-     * the example client buffer. */
+     * the example bclient buffer. */
     c->obuf = sdsempty();
     /* Prefix the request buffer with AUTH and/or SELECT commands, if applicable.
-     * These commands are discarded after the first response, so if the client is
+     * These commands are discarded after the first response, so if the bclient is
      * reused the commands will not be used again. */
     c->prefix_pending = 0;
     if (config.auth) {
@@ -351,7 +351,7 @@ static client createClient(char *cmd, size_t len, client from) {
 
     /* If a DB number different than zero is selected, prefix our request
      * buffer with the SELECT command, that will be discarded the first
-     * time the replies are received, so if the client is reused the
+     * time the replies are received, so if the bclient is reused the
      * SELECT command will not be used again. */
     if (config.dbnum != 0) {
         c->obuf = sdscatprintf(c->obuf,"*2\r\n$6\r\nSELECT\r\n$%d\r\n%s\r\n",
@@ -405,16 +405,16 @@ static client createClient(char *cmd, size_t len, client from) {
     }
     if (config.idlemode == 0)
         aeCreateFileEvent(config.el,c->context->fd,AE_WRITABLE,writeHandler,c);
-    listAddNodeTail(config.clients,c);
-    config.liveclients++;
+    listAddNodeTail(config.bclients,c);
+    config.livebclients++;
     return c;
 }
 
-static void createMissingClients(client c) {
+static void createMissingbclients(bclient c) {
     int n = 0;
 
-    while(config.liveclients < config.numclients) {
-        createClient(NULL,0,c);
+    while(config.livebclients < config.numbclients) {
+        createbclient(NULL,0,c);
 
         /* Listen backlog is quite limited on most systems */
         if (++n > 64) {
@@ -437,7 +437,7 @@ static void showLatencyReport(void) {
         printf("====== %s ======\n", config.title);
         printf("  %d requests completed in %.2f seconds\n", config.requests_finished,
             (float)config.totlatency/1000);
-        printf("  %d parallel clients\n", config.numclients);
+        printf("  %d parallel bclients\n", config.numbclients);
         printf("  %d bytes payload\n", config.datasize);
         printf("  keep alive: %d\n", config.keepalive);
         printf("\n");
@@ -459,21 +459,21 @@ static void showLatencyReport(void) {
 }
 
 static void benchmark(char *title, char *cmd, int len) {
-    client c;
+    bclient c;
 
     config.title = title;
     config.requests_issued = 0;
     config.requests_finished = 0;
 
-    c = createClient(cmd,len,NULL);
-    createMissingClients(c);
+    c = createbclient(cmd,len,NULL);
+    createMissingbclients(c);
 
     config.start = mstime();
     aeMain(config.el);
     config.totlatency = mstime()-config.start;
 
     showLatencyReport();
-    freeAllClients();
+    freeAllbclients();
 }
 
 /* Returns number of consumed options. */
@@ -487,7 +487,7 @@ int parseOptions(int argc, const char **argv) {
 
         if (!strcmp(argv[i],"-c")) {
             if (lastarg) goto invalid;
-            config.numclients = atoi(argv[++i]);
+            config.numbclients = atoi(argv[++i]);
         } else if (!strcmp(argv[i],"-n")) {
             if (lastarg) goto invalid;
             config.requests = atoi(argv[++i]);
@@ -565,12 +565,12 @@ invalid:
 
 usage:
     printf(
-"Usage: redis-benchmark [-h <host>] [-p <port>] [-c <clients>] [-n <requests>] [-k <boolean>]\n\n"
+"Usage: redis-benchmark [-h <host>] [-p <port>] [-c <bclients>] [-n <requests>] [-k <boolean>]\n\n"
 " -h <hostname>      Server hostname (default 127.0.0.1)\n"
 " -p <port>          Server port (default 6379)\n"
 " -s <socket>        Server socket (overrides host and port)\n"
 " -a <password>      Password for Redis Auth\n"
-" -c <clients>       Number of parallel connections (default 50)\n"
+" -c <bclients>       Number of parallel connections (default 50)\n"
 " -n <requests>      Total number of requests (default 100000)\n"
 " -d <size>          Data size of SET/GET value in bytes (default 3)\n"
 " --dbnum <db>       SELECT the specified db number (default 0)\n"
@@ -593,7 +593,7 @@ usage:
 "Examples:\n\n"
 " Run the benchmark with the default configuration against 127.0.0.1:6379:\n"
 "   $ redis-benchmark\n\n"
-" Use 20 parallel clients, for a total of 100k requests, against 192.168.1.1:\n"
+" Use 20 parallel bclients, for a total of 100k requests, against 192.168.1.1:\n"
 "   $ redis-benchmark -h 192.168.1.1 -p 6379 -n 100000 -c 20\n\n"
 " Fill 127.0.0.1:6379 with about 1 million keys only using the SET test:\n"
 "   $ redis-benchmark -t set -n 1000000 -r 100000000\n\n"
@@ -609,18 +609,18 @@ usage:
     exit(exit_status);
 }
 
-int showThroughput(struct aeEventLoop *eventLoop, long long id, void *clientData) {
+int showThroughput(struct aeEventLoop *eventLoop, long long id, void *bclientData) {
     UNUSED(eventLoop);
     UNUSED(id);
-    UNUSED(clientData);
+    UNUSED(bclientData);
 
-    if (config.liveclients == 0) {
-        fprintf(stderr,"All clients disconnected... aborting.\n");
+    if (config.livebclients == 0) {
+        fprintf(stderr,"All bclients disconnected... aborting.\n");
         exit(1);
     }
     if (config.csv) return 250;
     if (config.idlemode == 1) {
-        printf("clients: %d\r", config.liveclients);
+        printf("bclients: %d\r", config.livebclients);
         fflush(stdout);
 	return 250;
     }
@@ -650,15 +650,15 @@ int main(int argc, const char **argv) {
     char *data, *cmd;
     int len;
 
-    client c;
+    bclient c;
 
     srandom(time(NULL));
     signal(SIGHUP, SIG_IGN);
     signal(SIGPIPE, SIG_IGN);
 
-    config.numclients = 50;
+    config.numbclients = 50;
     config.requests = 100000;
-    config.liveclients = 0;
+    config.livebclients = 0;
     config.el = aeCreateEventLoop(1024*10);
     aeCreateTimeEvent(config.el,1,showThroughput,NULL,NULL);
     config.keepalive = 1;
@@ -672,7 +672,7 @@ int main(int argc, const char **argv) {
     config.loop = 0;
     config.idlemode = 0;
     config.latency = NULL;
-    config.clients = listCreate();
+    config.bclients = listCreate();
     config.hostip = "127.0.0.1";
     config.hostport = 6379;
     config.hostsocket = NULL;
@@ -687,13 +687,13 @@ int main(int argc, const char **argv) {
     config.latency = zmalloc(sizeof(long long)*config.requests);
 
     if (config.keepalive == 0) {
-        printf("WARNING: keepalive disabled, you probably need 'echo 1 > /proc/sys/net/ipv4/tcp_tw_reuse' for Linux and 'sudo sysctl -w net.inet.tcp.msl=1000' for Mac OS X in order to use a lot of clients/requests\n");
+        printf("WARNING: keepalive disabled, you probably need 'echo 1 > /proc/sys/net/ipv4/tcp_tw_reuse' for Linux and 'sudo sysctl -w net.inet.tcp.msl=1000' for Mac OS X in order to use a lot of bclients/requests\n");
     }
 
     if (config.idlemode) {
-        printf("Creating %d idle connections and waiting forever (Ctrl+C when done)\n", config.numclients);
-        c = createClient("",0,NULL); /* will never receive a reply */
-        createMissingClients(c);
+        printf("Creating %d idle connections and waiting forever (Ctrl+C when done)\n", config.numbclients);
+        c = createbclient("",0,NULL); /* will never receive a reply */
+        createMissingbclients(c);
         aeMain(config.el);
         /* and will wait for every */
     }
