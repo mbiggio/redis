@@ -404,7 +404,7 @@ void setproctitle(const char *fmt, ...) {
 	} else if (nul == SPT.nul && &nul[1] < SPT.end) {
 		*SPT.nul = ' ';
 		*++nul = '\0';
-	}
+	} 
 
 	return;
 error:
