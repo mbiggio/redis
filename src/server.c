@@ -33,6 +33,7 @@
 #include "bio.h"
 #include "latency.h"
 #include "atomicvar.h"
+#include "asciilogo.h"
 
 #include <time.h>
 #include <signal.h>
@@ -3418,7 +3419,6 @@ void usage(void) {
 }
 
 void redisAsciiArt(void) {
-#include "asciilogo.h"
     char *buf = zmalloc(1024*16);
     char *mode;
 
