@@ -101,18 +101,50 @@ static int spt_copyenv(char *oldenv[]) {
 	char *eq;
 	int i, error;
 
+	/*
+	 * If environ is not equal to oldenv,
+	 * it means that the env variables have already been
+	 * moved elsewhere. This is never the case when
+	 * spt_copyenv is called from spt_init.
+	 */
 	if (environ != oldenv)
 		return 0;
 
+	/*
+	 * spt_clearenv just calls clearenv(),
+	 * which basically just sets environ to NULL.
+	 * Note that it does not clear the env variables
+	 * memory location, which is still pointed to
+	 * by oldenv.
+	 */
 	if ((error = spt_clearenv()))
 		goto error;
 
+
 	for (i = 0; oldenv[i]; i++) {
+
+		/*
+		 * Find the location of the '=' sign,
+		 * pointed to by eq.
+		 */
+
 		if (!(eq = strchr(oldenv[i], '=')))
 			continue;
 
+		/*
+		 * Null-terminate the env variable.
+		 */
 		*eq = '\0';
+
+		/*
+		 * Set the environment variable with the proper value.
+		 * I don't think setenv actually stores it in the heap.
+		 */
 		error = (0 != setenv(oldenv[i], eq + 1, 1))? errno : 0;
+
+		/*
+		 * Restore the equal sign (not sure if it's actually useful).
+		 */
 		*eq = '=';
 
 		if (error)
@@ -131,13 +163,26 @@ static int spt_copyargs(int argc, char *argv[]) {
 	char *tmp;
 	int i;
 
+	/*
+	 * Note that the loop starts from 1:
+	 * the point of doing all this is to transfer all data
+	 * so that we can extend as much as possible the program name
+	 * in argv[0], which will remain in the same position in memory.
+	 */
 	for (i = 1; i < argc || (i >= argc && argv[i]); i++) {
 		if (!argv[i])
 			continue;
 
+		/*
+		 * Make tmp point to a copy of the argument stored in the heap
+		 * (strdup uses malloc).
+		 */
 		if (!(tmp = strdup(argv[i])))
 			return errno;
 
+		/*
+		 * Make argv[i] point to this location in the heap.
+		 */
 		argv[i] = tmp;
 	}
 
@@ -151,29 +196,77 @@ void spt_init(int argc, char *argv[]) {
 	char *base, *end, *nul, *tmp;
 	int i, error;
 
-	if (!(base = argv[0]))
+	if (!(base = argv[0])) {
+		/*
+		 * argv[0] is NULL in this case.
+		 * Not sure how this could happen.
+		 */
 		return;
+	}
 
+	/*
+	 * nul is initialized to base[len(base)],
+	 * which means it points to the terminating NULL character.
+	 *
+	 * end is made to point to the first character following the
+	 * terminating NULL character.
+	 */
 	nul = &base[strlen(base)];
 	end = nul + 1;
 
+	/*
+	 * Loop on all the arguments.
+	 * Also go beyond argc if argv[i] is not NULL.
+	 */
 	for (i = 0; i < argc || (i >= argc && argv[i]); i++) {
+		/*
+		 * Discard currend cli argument if either
+		 * it is the empty string or its starting point
+		 * is before end (it means we already considered this portion of memory).
+		 */
 		if (!argv[i] || argv[i] < end)
 			continue;
 
+		/*
+		 * update end with the first character after the string.
+		 */
 		end = argv[i] + strlen(argv[i]) + 1;
 	}
 
+	/*
+	 * Do the same as before for all the environment variables.
+	 */
 	for (i = 0; envp[i]; i++) {
 		if (envp[i] < end)
 			continue;
+
+		/*
+		 * update end with the first character after the string.
+		 */
 		end = envp[i] + strlen(envp[i]) + 1;
 	}
 
+	/*
+	 * Copy the original process title to SPT.arg0.
+	 * Note that strdup makes a new copy (it uses malloc).
+	 */
 	if (!(SPT.arg0 = strdup(argv[0])))
 		goto syerr;
 
+	printf("SPT.arg0 = %s\n", SPT.arg0);
+
 #if __GLIBC__
+
+	/*
+	 * Make "program_invocation_name" and
+	 * "program_invocation_short_name" point to
+	 * a different location in the heap, with
+	 * an exact copy of the originally pointed string.
+	 */
+
+	printf("Original program_invocation_name:       %s(%p)\n", program_invocation_name,       program_invocation_name     );
+	printf("Original program_invocation_short_name: %s(%p)\n", program_invocation_short_name, program_invocation_short_name);
+
 
 	if (!(tmp = strdup(program_invocation_name)))
 		goto syerr;
@@ -184,6 +277,11 @@ void spt_init(int argc, char *argv[]) {
 		goto syerr;
 
 	program_invocation_short_name = tmp;
+
+	printf("New program_invocation_name:       %s(%p)\n", program_invocation_name,       program_invocation_name     );
+	printf("New program_invocation_short_name: %s(%p)\n", program_invocation_short_name, program_invocation_short_name);
+
+
 #elif __APPLE__
 	if (!(tmp = strdup(getprogname())))
 		goto syerr;
@@ -192,19 +290,45 @@ void spt_init(int argc, char *argv[]) {
 #endif
 
 
+	/*
+	 * Make the environment variables point to
+	 * a different location (in the heap? not sure ...), with
+	 * an exact copy of the originally pointed strings.
+	 */
+
 	if ((error = spt_copyenv(envp)))
 		goto error;
 
+	/*
+	 * Make the arguments point to
+	 * a different location in the heap, with
+	 * an exact copy of the originally pointed strings.
+	 */
+
 	if ((error = spt_copyargs(argc, argv)))
 		goto error;
+
+	/*
+	 * Now all the environment variables, arguments except argv[0],
+	 * and program_invocation_name + program_invocation_short_name
+	 * have been copied to safe memory locations.
+	 * Therefore we can extend argv[0] to a location up to end.
+	 * Store the nul, base and end pointers in SPT so that they can be
+	 * later used by setproctitle to set the new argv[0].
+	 */
 
 	SPT.nul  = nul;
 	SPT.base = base;
 	SPT.end  = end;
 
+	printf("SPT.base: %s(%p)\n", SPT.base, SPT.base);
+	printf("SPT.nul : (%p)\n", SPT.nul);
+	printf("SPT.end : (%p)\n", SPT.end);
+
 	return;
 syerr:
 	error = errno;
+	/* execution will go on to "error" */
 error:
 	SPT.error = error;
 } /* spt_init() */
