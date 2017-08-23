@@ -3679,11 +3679,32 @@ int moduleRegisterApi(const char *funcname, void *funcptr) {
 void moduleRegisterCoreAPI(void);
 
 void moduleInitModulesSystem(void) {
+	/*
+	 * List of unblocked clients
+	 */
     moduleUnblockedClients = listCreate();
 
+    /*
+     * List of modules to load at startup
+     */
     server.loadmodule_queue = listCreate();
+
+    /*
+     * Hash table of modules
+     */
     modules = dictCreate(&modulesDictType,NULL);
+
+    /*
+     * Initialize the server.moduleapi dictionary with
+     * (moduleapi, function) key-value pairs.
+     */
     moduleRegisterCoreAPI();
+
+    /*
+     * Initialize the pipe used to awake the event loop if a
+     * client blocked on a module command needs
+     * to be processed.
+     */
     if (pipe(server.module_blocked_pipe) == -1) {
         serverLog(LL_WARNING,
             "Can't create the pipe for module blocking commands: %s",

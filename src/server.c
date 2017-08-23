@@ -3658,8 +3658,16 @@ int redisIsSupervised(int mode) {
         const char *notify_socket = getenv("NOTIFY_SOCKET");
 
         if (upstart_job) {
+        	/*
+        	 * TODO: here we always return 0 (NOT SUPERVISED).
+        	 * Sounds like a bug.
+        	 */
             redisSupervisedUpstart();
         } else if (notify_socket) {
+        	/*
+        	 * TODO: here we always return 0 (NOT SUPERVISED).
+        	 * Sounds like a bug.
+        	 */
             redisSupervisedSystemd();
         }
     } else if (mode == SUPERVISED_UPSTART) {
@@ -3802,6 +3810,15 @@ int main(int argc, char **argv) {
             exit(1);
         }
         resetServerSaveParams();
+
+        /*
+         * The command-line options have been put in options.
+         * The configuration absolute filename is stored in configfile.
+         * Function loadServerConfig appends all options from configfile
+         * and from options to a unique sds string and then interprets these options.
+         * options are appended at the bottom, so that they override options
+         * in the configfile.
+         */
         loadServerConfig(configfile,options);
         sdsfree(options);
     }

@@ -347,6 +347,10 @@ void setproctitle(const char *fmt, ...) {
 	if (!SPT.base)
 		return;
 
+	/*
+	 * If no string is passed to setproctitle,
+	 * use the original argv[0] stored in SPT.
+	 */
 	if (fmt) {
 		va_start(ap, fmt);
 		len = vsnprintf(buf, sizeof buf, fmt, ap);
@@ -368,6 +372,14 @@ void setproctitle(const char *fmt, ...) {
 	if (len <= 0)
 		{ error = errno; goto error; }
 
+	/*
+	 * The first time we call this function,
+	 * SPT.reset is not set, and therefore we set to zero
+	 * the entire available region.
+	 * Otherwise, we know that the region previously written
+	 * in the previous call cannot exceed (sizeof buf),
+	 * so it's not necessary to set it all to zero again.
+	 */
 	if (!SPT.reset) {
 		memset(SPT.base, 0, SPT.end - SPT.base);
 		SPT.reset = 1;
@@ -375,9 +387,17 @@ void setproctitle(const char *fmt, ...) {
 		memset(SPT.base, 0, spt_min(sizeof buf, SPT.end - SPT.base));
 	}
 
+	/*
+	 * The lenght of the new title must fit in the minimum of these three quantities:
+	 * (len, sizeof buf, SPT.end - SPT.base)
+	 */
 	len = spt_min(len, spt_min(sizeof buf, SPT.end - SPT.base) - 1);
 	memcpy(SPT.base, buf, len);
 	nul = &SPT.base[len];
+
+	/*
+	 * TODO: This part is not clear
+	 */
 
 	if (nul < SPT.nul) {
 		*SPT.nul = '.';
