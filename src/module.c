@@ -3611,6 +3611,16 @@ RedisModuleCtx *RM_GetThreadSafeContext(RedisModuleBlockedClient *bc) {
      * in order to keep things like the currently selected database and similar
      * things. */
     ctx->client = createClient(-1);
+
+    /* We are reading a server array here to extract the redisDb pointer
+     * associated to the blocked client database index (we actually do the same also
+     * in createClient(-1) just above).
+     * This function is meant to be executed in a thread,
+     * therefore this might lead to concurrency issues, since server is a shared structure.
+     * However I believe the redisDb array in the server struct
+     * is read-only, set once and for all when parsing the redis configuration file.
+     * If this is the case, np problem can arise.
+     */
     if (bc) selectDb(ctx->client,bc->dbid);
     return ctx;
 }
