@@ -360,12 +360,15 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
      * events, in order to sleep until the next time event is ready
      * to fire. */
     if (eventLoop->maxfd != -1 ||
+    	// we either are listening to some fd
+        // OR not, but we have to process time events, and wait until some is ready
         ((flags & AE_TIME_EVENTS) && !(flags & AE_DONT_WAIT))) {
         int j;
         aeTimeEvent *shortest = NULL;
         struct timeval tv, *tvp;
 
-        if (flags & AE_TIME_EVENTS && !(flags & AE_DONT_WAIT))
+        if ((flags & AE_TIME_EVENTS) && !(flags & AE_DONT_WAIT))
+        	// Look for the closest time event
             shortest = aeSearchNearestTimer(eventLoop);
         if (shortest) {
             long now_sec, now_ms;
@@ -413,9 +416,11 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
             int fd = eventLoop->fired[j].fd;
             int rfired = 0;
 
-	    /* note the fe->mask & mask & ... code: maybe an already processed
+	        /* note the fe->mask & mask & ... code: maybe an already processed
              * event removed an element that fired and we still didn't
-             * processed, so we check if the event is still valid. */
+             * processed, so we check if the event is still valid.
+             * NB: when a file event is no more valid, its flag is set to 0
+             * (non-readable & non-writable)*/
             if (fe->mask & mask & AE_READABLE) {
                 rfired = 1;
                 fe->rfileProc(eventLoop,fd,fe->clientData,mask);
@@ -460,7 +465,11 @@ void aeMain(aeEventLoop *eventLoop) {
     eventLoop->stop = 0;
     while (!eventLoop->stop) {
         if (eventLoop->beforesleep != NULL)
+
+        	// Call beforeSleep here, just before aeProcessEvents,
+        	// where we'll wait for file descriptors to be ready for W/R
             eventLoop->beforesleep(eventLoop);
+
         aeProcessEvents(eventLoop, AE_ALL_EVENTS|AE_CALL_AFTER_SLEEP);
     }
 }

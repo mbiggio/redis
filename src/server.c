@@ -1232,6 +1232,7 @@ void beforeSleep(struct aeEventLoop *eventLoop) {
      * releasing the GIL. Redis main thread will not touch anything at this
      * time. */
     if (moduleCount()) moduleReleaseGIL();
+
 }
 
 /* This function is called immadiately after the event loop multiplexing
