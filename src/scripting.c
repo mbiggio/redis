@@ -1147,11 +1147,26 @@ int redis_math_randomseed (lua_State *L) {
  *
  *   f_<hex sha1 sum>
  *
+ * If 'funcname' is NULL, the function name is created by the function
+ * on the fly doing the SHA1 of the body, this means that passing the funcname
+ * is just an optimization in case it's already at hand.
+ *
+ * The function increments the reference count of the 'body' object as a
+ * side effect of a successful call.
+ *
  * On success C_OK is returned, and nothing is left on the Lua stack.
  * On error C_ERR is returned and an appropriate error is set in the
  * client context. */
 int luaCreateFunction(client *c, lua_State *lua, char *funcname, robj *body) {
     sds funcdef = sdsempty();
+    char fname[43];
+
+    if (funcname == NULL) {
+        fname[0] = 'f';
+        fname[1] = '_';
+        sha1hex(fname+2,body->ptr,sdslen(body->ptr));
+        funcname = fname;
+    }
 
     funcdef = sdscat(funcdef,"function ");
     funcdef = sdscatlen(funcdef,funcname,42);
@@ -1160,16 +1175,21 @@ int luaCreateFunction(client *c, lua_State *lua, char *funcname, robj *body) {
     funcdef = sdscatlen(funcdef,"\nend",4);
 
     if (luaL_loadbuffer(lua,funcdef,sdslen(funcdef),"@user_script")) {
-        addReplyErrorFormat(c,"Error compiling script (new function): %s\n",
-            lua_tostring(lua,-1));
+        if (c != NULL) {
+            addReplyErrorFormat(c,
+                "Error compiling script (new function): %s\n",
+                lua_tostring(lua,-1));
+        }
         lua_pop(lua,1);
         sdsfree(funcdef);
         return C_ERR;
     }
     sdsfree(funcdef);
     if (lua_pcall(lua,0,0,0)) {
-        addReplyErrorFormat(c,"Error running script (new function): %s\n",
-            lua_tostring(lua,-1));
+        if (c != NULL) {
+            addReplyErrorFormat(c,"Error running script (new function): %s\n",
+                lua_tostring(lua,-1));
+        }
         lua_pop(lua,1);
         return C_ERR;
     }
@@ -1180,7 +1200,7 @@ int luaCreateFunction(client *c, lua_State *lua, char *funcname, robj *body) {
     {
         int retval = dictAdd(server.lua_scripts,
                              sdsnewlen(funcname+2,40),body);
-        serverAssertWithInfo(c,NULL,retval == DICT_OK);
+        serverAssertWithInfo(c ? c : server.lua_client,NULL,retval == DICT_OK);
         incrRefCount(body);
     }
     return C_OK;

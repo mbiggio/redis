@@ -1026,9 +1026,9 @@ void objectCommand(client *c) {
         blen++; addReplyStatus(c,
         "encoding -- Return the kind of internal representation used in order to store the value associated with a key.");
         blen++; addReplyStatus(c,
-        "idletime -- Return the number of seconds since the object stored at the specified key is idle.");
+        "idletime -- Return the idle time of the key, that is the approximated number of seconds elapsed since the last access to the key.");
         blen++; addReplyStatus(c,
-        "freq -- Return the inverse logarithmic access frequency counter of the object stored at the specified key.");
+        "freq -- Return the access frequency index of the key. The returned integer is proportional to the logarithm of the recent access frequency of the key.");
         setDeferredMultiBulkLength(c,blenp,blen);
     } else if (!strcasecmp(c->argv[1]->ptr,"refcount") && c->argc == 3) {
         if ((o = objectCommandLookupOrReply(c,c->argv[2],shared.nullbulk))
@@ -1050,10 +1050,14 @@ void objectCommand(client *c) {
         if ((o = objectCommandLookupOrReply(c,c->argv[2],shared.nullbulk))
                 == NULL) return;
         if (!(server.maxmemory_policy & MAXMEMORY_FLAG_LFU)) {
-            addReplyError(c,"A non-LFU maxmemory policy is selected, access frequency not tracked. Please note that when switching between policies at runtime LRU and LFU data will take some time to adjust.");
+            addReplyError(c,"An LFU maxmemory policy is not selected, access frequency not tracked. Please note that when switching between policies at runtime LRU and LFU data will take some time to adjust.");
             return;
         }
-        addReplyLongLong(c,o->lru&255);
+        /* LFUDecrAndReturn should be called
+         * in case of the key has not been accessed for a long time,
+         * because we update the access time only
+         * when the key is read or overwritten. */
+        addReplyLongLong(c,LFUDecrAndReturn(o));
     } else {
         addReplyErrorFormat(c, "Unknown subcommand or wrong number of arguments for '%s'. Try OBJECT help",
             (char *)c->argv[1]->ptr);

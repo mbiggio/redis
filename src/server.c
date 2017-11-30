@@ -277,7 +277,7 @@ struct redisCommand redisCommandTable[] = {
     {"readonly",readonlyCommand,1,"F",0,NULL,0,0,0,0,0},
     {"readwrite",readwriteCommand,1,"F",0,NULL,0,0,0,0,0},
     {"dump",dumpCommand,2,"r",0,NULL,1,1,1,0,0},
-    {"object",objectCommand,3,"r",0,NULL,2,2,2,0,0},
+    {"object",objectCommand,-2,"r",0,NULL,2,2,2,0,0},
     {"memory",memoryCommand,-2,"r",0,NULL,0,0,0,0,0},
     {"client",clientCommand,-2,"as",0,NULL,0,0,0,0,0},
     {"eval",evalCommand,-3,"s",0,evalGetKeys,0,0,0,0,0},
@@ -1551,16 +1551,29 @@ int restartServer(int flags, mstime_t delay) {
 
     /* Check if we still have accesses to the executable that started this
      * server instance. */
-    if (access(server.executable,X_OK) == -1) return C_ERR;
+    if (access(server.executable,X_OK) == -1) {
+        serverLog(LL_WARNING,"Can't restart: this process has no "
+                             "permissions to execute %s", server.executable);
+        return C_ERR;
+    }
 
     /* Config rewriting. */
     if (flags & RESTART_SERVER_CONFIG_REWRITE &&
         server.configfile &&
-        rewriteConfig(server.configfile) == -1) return C_ERR;
+        rewriteConfig(server.configfile) == -1)
+    {
+        serverLog(LL_WARNING,"Can't restart: configuration rewrite process "
+                             "failed");
+        return C_ERR;
+    }
 
     /* Perform a proper shutdown. */
     if (flags & RESTART_SERVER_GRACEFULLY &&
-        prepareForShutdown(SHUTDOWN_NOFLAGS) != C_OK) return C_ERR;
+        prepareForShutdown(SHUTDOWN_NOFLAGS) != C_OK)
+    {
+        serverLog(LL_WARNING,"Can't restart: error preparing for shutdown");
+        return C_ERR;
+    }
 
     /* Close all file descriptors, with the exception of stdin, stdout, strerr
      * which are useful if we restart a Redis server which is not daemonized. */
@@ -1572,6 +1585,8 @@ int restartServer(int flags, mstime_t delay) {
 
     /* Execute the server with the original command line. */
     if (delay) usleep(delay*1000);
+    zfree(server.exec_argv[0]);
+    server.exec_argv[0] = zstrdup(server.executable);
     execve(server.executable,server.exec_argv,environ);
 
     /* If an error occurred here, there is nothing we can do, but exit. */
