@@ -126,7 +126,7 @@ volatile unsigned long lru_clock; /* Server global current LRU time. */
  *    are not fast commands.
  */
 struct redisCommand redisCommandTable[] = {
-    {"module",moduleCommand,-2,"as",0,NULL,1,1,1,0,0},
+    {"module",moduleCommand,-2,"as",0,NULL,0,0,0,0,0},
     {"get",getCommand,2,"rF",0,NULL,1,1,1,0,0},
     {"set",setCommand,-3,"wm",0,NULL,1,1,1,0,0},
     {"setnx",setnxCommand,3,"wmF",0,NULL,1,1,1,0,0},
@@ -1096,7 +1096,7 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
         }
     } else {
         /* If there is not a background saving/rewrite in progress check if
-         * we have to save/rewrite now */
+         * we have to save/rewrite now. */
          for (j = 0; j < server.saveparamslen; j++) {
             struct saveparam *sp = server.saveparams+j;
 
@@ -1119,8 +1119,9 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
             }
          }
 
-         /* Trigger an AOF rewrite if needed */
-         if (server.rdb_child_pid == -1 &&
+         /* Trigger an AOF rewrite if needed. */
+         if (server.aof_state == AOF_ON &&
+             server.rdb_child_pid == -1 &&
              server.aof_child_pid == -1 &&
              server.aof_rewrite_perc &&
              server.aof_current_size > server.aof_rewrite_min_size)
@@ -1390,6 +1391,7 @@ void initServerConfig(void) {
     server.active_defrag_threshold_upper = CONFIG_DEFAULT_DEFRAG_THRESHOLD_UPPER;
     server.active_defrag_cycle_min = CONFIG_DEFAULT_DEFRAG_CYCLE_MIN;
     server.active_defrag_cycle_max = CONFIG_DEFAULT_DEFRAG_CYCLE_MAX;
+    server.proto_max_bulk_len = CONFIG_DEFAULT_PROTO_MAX_BULK_LEN;
     server.client_max_querybuf_len = PROTO_MAX_QUERYBUF_LEN;
     server.saveparams = NULL;
     server.loading = 0;
